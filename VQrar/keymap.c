@@ -1,5 +1,6 @@
 #include QMK_KEYBOARD_H
 #include "version.h"
+#include <string.h>
 #define MOON_LED_LEVEL LED_LEVEL
 #ifndef ZSA_SAFE_RANGE
 #define ZSA_SAFE_RANGE SAFE_RANGE
@@ -7,6 +8,7 @@
 
 enum custom_keycodes {
   RGB_SLD = ZSA_SAFE_RANGE,
+  USG_RST,
 };
 
 
@@ -34,7 +36,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, TD(DANCE_1),                                                                    TD(DANCE_3),    KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, 
     KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT,                                 KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, 
     KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT,                                                                                                 KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT, 
-    KC_TRANSPARENT, KC_TRANSPARENT, KC_NO,                          KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT
+    KC_TRANSPARENT, USG_RST,        RGB_SLD,                        KC_TRANSPARENT, KC_TRANSPARENT, KC_TRANSPARENT
   ),
   [2] = LAYOUT_moonlander(
     KC_TRANSPARENT, KC_NO,          KC_NO,          KC_NO,          KC_NO,          KC_NO,          KC_NO,                                          KC_NO,          KC_DELETE,      KC_ESCAPE,      KC_BSPC,        KC_SLASH,       KC_NO,          KC_NO,          
@@ -78,6 +80,82 @@ void keyboard_post_init_user(void) {
   rgb_matrix_enable();
 }
 
+static bool usage_mode_enabled = false;
+static uint32_t key_press_count[MATRIX_ROWS][MATRIX_COLS];
+static bool reset_hold_active = false;
+static bool reset_hold_cancelled = false;
+static bool reset_hold_done = false;
+static uint32_t reset_hold_timer = 0;
+
+static HSV usage_hsv_from_count(uint32_t count) {
+  if (count == 0) {
+    return (HSV){0, 0, 20}; // 0: idle / near-black
+  }
+
+  if (count <= 100) {
+    return (HSV){0, 0, 180 + (count * 75 / 100)}; // 1-100: pale white
+  }
+
+  if (count <= 200) {
+    return (HSV){35, 140, 200 + ((count - 100) * 55 / 100)}; // 101-200: warm low-use
+  }
+
+  if (count <= 300) {
+    return (HSV){50, 200, 220 + ((count - 200) * 35 / 100)}; // 201-300: stronger warm
+  }
+
+  if (count <= 400) {
+    return (HSV){20, 255, 220 + ((count - 300) * 35 / 100)}; // 301-400: orange
+  }
+
+  if (count <= 500) {
+    return (HSV){0, 255, 220 + ((count - 400) * 35 / 100)}; // 401-500: amber/red
+  }
+
+  if (count <= 600) {
+    return (HSV){0, 255, 255}; // 501-600: red
+  }
+
+  if (count <= 700) {
+    return (HSV){0, 255, 255}; // 601-700: red
+  }
+
+  if (count <= 800) {
+    return (HSV){0, 255, 255}; // 701-800: red
+  }
+
+  if (count <= 900) {
+    return (HSV){0, 255, 255}; // 801-900: red
+  }
+
+  if (count <= 1000) {
+    return (HSV){0, 255, 255}; // 901-1000: max red
+  }
+
+  return (HSV){0, 255, 255}; // capped at 1000
+}
+
+static void reset_usage_counters(void) {
+  memset(key_press_count, 0, sizeof(key_press_count));
+}
+
+static void set_usage_color(void) {
+  rgb_matrix_set_color_all(0, 0, 0);
+
+  for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
+    for (uint8_t col = 0; col < MATRIX_COLS; col++) {
+      uint8_t led_index = pgm_read_byte(&g_led_config.matrix_co[row][col]);
+      if (led_index == NO_LED) {
+        continue;
+      }
+
+      HSV hsv = usage_hsv_from_count(key_press_count[row][col]);
+      RGB rgb = hsv_to_rgb_with_value(hsv);
+      rgb_matrix_set_color(led_index, rgb.r, rgb.g, rgb.b);
+    }
+  }
+}
+
 const uint8_t PROGMEM ledmap[][RGB_MATRIX_LED_COUNT][3] = {
     [0] = { {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {252,255,255}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {61,69,96}, {252,255,255} },
 
@@ -111,6 +189,12 @@ bool rgb_matrix_indicators_user(void) {
   if (rawhid_state.rgb_control) {
       return false;
   }
+
+  if (usage_mode_enabled) {
+    set_usage_color();
+    return true;
+  }
+
   if (!keyboard_config.disable_layer_led) { 
     switch (biton32(layer_state)) {
       case 0:
@@ -322,7 +406,28 @@ tap_dance_action_t tap_dance_actions[] = {
         [DANCE_3] = ACTION_TAP_DANCE_FN_ADVANCED(on_dance_3, dance_3_finished, dance_3_reset),
 };
 
+void matrix_scan_user(void) {
+  if (reset_hold_active && !reset_hold_cancelled && !reset_hold_done && timer_elapsed32(reset_hold_timer) >= 3000) {
+    reset_usage_counters();
+    reset_hold_done = true;
+  }
+}
+
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+  if (record->event.pressed) {
+    if (reset_hold_active && keycode != USG_RST) {
+      reset_hold_cancelled = true;
+    }
+
+    if (keycode != KC_NO && keycode != KC_TRNS && keycode != RGB_SLD && keycode != USG_RST) {
+      uint8_t row = record->event.key.row;
+      uint8_t col = record->event.key.col;
+      if (row < MATRIX_ROWS && col < MATRIX_COLS) {
+        key_press_count[row][col]++;
+      }
+    }
+  }
+
   switch (keycode) {
   case QK_MODS ... QK_MODS_MAX:
     // Mouse and consumer keys (volume, media) with modifiers work inconsistently across operating systems,
@@ -346,9 +451,24 @@ bool process_record_user(uint16_t keycode, keyrecord_t *record) {
             return false;
         }
         if (record->event.pressed) {
-            rgblight_mode(1);
+      usage_mode_enabled = !usage_mode_enabled;
         }
         return false;
+
+  case USG_RST:
+    if (record->event.pressed) {
+      register_code(KC_LEFT_GUI);
+      reset_hold_active = true;
+      reset_hold_cancelled = false;
+      reset_hold_done = false;
+      reset_hold_timer = timer_read32();
+    } else {
+      unregister_code(KC_LEFT_GUI);
+      reset_hold_active = false;
+      reset_hold_cancelled = false;
+      reset_hold_done = false;
+    }
+    return false;
   }
   return true;
 }
